@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  membind:
+    build: ..
+    ports:
+      - "8901:8901"
+    env_file:
+      - ../.env
+    volumes:
+      - membind-data:/app/data
+
+volumes:
+  membind-data:

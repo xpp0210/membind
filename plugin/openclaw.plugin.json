@@ -1,0 +1,35 @@
+{
+  "id": "membind-openclaw-plugin",
+  "name": "MemBind Memory",
+  "description": "Binding-First Agent memory system with two-stage retrieval (binding score + semantic similarity), conflict detection, lifecycle management, and conversation chunk storage. Drop-in replacement for MemOS with superior memory quality.",
+  "kind": "memory",
+  "version": "0.1.0",
+  "homepage": "https://github.com/xiepengpeng/membind",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "membindUrl": {
+        "type": "string",
+        "description": "MemBind HTTP API base URL (default: http://127.0.0.1:8765)"
+      },
+      "viewerPort": {
+        "type": "number",
+        "description": "Memory Viewer HTTP port (default 18799)"
+      }
+    }
+  },
+  "requirements": {
+    "node": ">=18.0.0",
+    "openclaw": ">=2026.2.0"
+  },
+  "setup": {
+    "notes": [
+      "After install, add to ~/.openclaw/openclaw.json: plugins.slots.memory = \"membind-openclaw-plugin\"",
+      "Set agents.defaults.memorySearch.enabled = false to disable OpenClaw's built-in memory",
+      "Ensure MemBind server is running: cd ~/projects/membind && python -m uvicorn server:app --port 8765",
+      "Restart the gateway: openclaw gateway stop && openclaw gateway start"
+    ]
+  },
+  "extensions": ["./index.ts"]
+}
