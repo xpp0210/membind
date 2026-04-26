@@ -100,38 +100,13 @@ CREATE INDEX IF NOT EXISTS idx_chunks_memory ON chunks(memory_id);
 -- ============================================================
 -- 6. memories_vec 虚拟表：向量索引（sqlite-vec）
 -- ============================================================
--- ============================================================
--- 6. chunks 表：对话片段（OpenClaw plugin兼容层）
--- ============================================================
-CREATE TABLE IF NOT EXISTS chunks (
-    id TEXT PRIMARY KEY,                   -- UUID v4
-    session_key TEXT NOT NULL,             -- 会话标识
-    turn_id TEXT NOT NULL,                 -- 对话轮次
-    seq INTEGER NOT NULL,                  -- 序号
-    role TEXT NOT NULL,                    -- user/assistant/system/tool
-    content TEXT NOT NULL,                 -- 原始内容
-    summary TEXT,                          -- 摘要
-    memory_id TEXT,                        -- 关联的记忆ID（被提取为独立记忆时）
-    owner TEXT DEFAULT 'agent:main',       -- 归属
-    is_deleted INTEGER DEFAULT 0,          -- 软删除
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_session ON chunks(session_key);
-CREATE INDEX IF NOT EXISTS idx_chunks_turn ON chunks(session_key, turn_id, seq);
-CREATE INDEX IF NOT EXISTS idx_chunks_memory ON chunks(memory_id);
-
--- ============================================================
--- 7. memories_vec 虚拟表：向量索引（sqlite-vec）
--- ============================================================
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
     id TEXT PRIMARY KEY,
     embedding float[1024]                  -- BAAI/bge-m3 输出维度
 );
 
 -- ============================================================
--- 8. knowledge_clusters 表：知识簇
+-- 7. knowledge_clusters 表：知识簇
 -- ============================================================
 CREATE TABLE IF NOT EXISTS knowledge_clusters (
     id TEXT PRIMARY KEY,
@@ -144,7 +119,7 @@ CREATE TABLE IF NOT EXISTS knowledge_clusters (
 CREATE INDEX IF NOT EXISTS idx_clusters_created ON knowledge_clusters(created_at);
 
 -- ============================================================
--- 9. memories_fts 虚拟表：FTS5全文检索
+-- 8. memories_fts 虚拟表：FTS5全文检索
 -- ============================================================
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     memory_id,
@@ -154,23 +129,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     tokenize='unicode61'
 );
 
--- FTS同步触发器
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(memory_id, content, scene, entities)
-    SELECT NEW.id, NEW.content,
-           COALESCE((SELECT scene FROM context_tags WHERE memory_id = NEW.id), ''),
-           COALESCE((SELECT entities FROM context_tags WHERE memory_id = NEW.id), '');
-END;
-
+-- FTS同步触发器（仅保留删除触发器，写入时序由应用层 core/memory_writer.py 保证）
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
     DELETE FROM memories_fts WHERE memory_id = OLD.id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content, is_deleted ON memories BEGIN
-    DELETE FROM memories_fts WHERE memory_id = OLD.id;
-    INSERT INTO memories_fts(memory_id, content, scene, entities)
-    SELECT NEW.id, NEW.content,
-           COALESCE((SELECT scene FROM context_tags WHERE memory_id = NEW.id), ''),
-           COALESCE((SELECT entities FROM context_tags WHERE memory_id = NEW.id), '')
-    WHERE NEW.is_deleted = 0;
 END;

@@ -99,10 +99,9 @@ class HybridRetriever:
                 })
 
             # 簇扩展
-            from core.cluster import ClusterManager
-            cluster_mgr = ClusterManager()
+            from core.cluster import cluster_manager
             result_ids = {r["id"] for r in results}
-            expanded = cluster_mgr.expand_cluster(list(result_ids), result_ids)
+            expanded = cluster_manager.expand_cluster(list(result_ids), result_ids)
 
             # 合并去重
             existing_ids = {r["id"] for r in results}

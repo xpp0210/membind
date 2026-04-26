@@ -11,29 +11,23 @@ from fastapi import APIRouter, Request
 from services.binding_service import update_feedback, get_stats
 from db.connection import get_connection
 from api.deps import get_namespace
+from models.memory import FeedbackRequest
 
 router = APIRouter(prefix="/api/v1", tags=["memory"])
 
 
 @router.post("/memory/feedback")
-async def feedback(body: dict, request: Request):
+async def feedback(req: FeedbackRequest, request: Request):
     """反馈记忆的相关性：relevant=true强化，false衰减"""
-    memory_id = body.get("memory_id", "")
-    query = body.get("query", "")
-    relevant = body.get("relevant", True)
-    context = body.get("context")
     namespace = get_namespace(request)
 
-    if not memory_id:
-        return {"error": "memory_id is required"}
-
-    update_feedback(memory_id, query, relevant, context)
-    delta = "+0.5" if relevant else "-0.5"
+    update_feedback(req.memory_id, req.query, req.relevant, req.context)
+    delta = "+0.5" if req.relevant else "-0.5"
 
     return {
         "status": "ok",
-        "memory_id": memory_id,
-        "action": "boosted" if relevant else "decayed",
+        "memory_id": req.memory_id,
+        "action": "boosted" if req.relevant else "decayed",
         "importance_delta": delta,
     }
 

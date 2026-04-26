@@ -32,3 +32,19 @@ class MemoryResponse(BaseModel):
     tags: ContextTagResponse
     conflict_check: Optional[dict] = None  # {"has_conflict": bool, "similar_id": str|None}
     created_at: datetime
+
+
+class FeedbackRequest(BaseModel):
+    """反馈请求"""
+    memory_id: str
+    query: str = ""
+    relevant: bool = True
+    context: dict | None = None
+
+
+class RecallRequest(BaseModel):
+    """召回请求"""
+    query: str
+    context: dict | None = None
+    top_k: int = Field(5, ge=1, le=50)
+    recall_n: int = Field(20, ge=1, le=100)

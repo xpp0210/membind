@@ -7,12 +7,12 @@ ConversationParser: 对话信息过滤器、压缩器和提取器
 
 import json
 import re
-import math
 from dataclasses import dataclass, field
 
 import httpx
 
 from config import settings
+from core.utils import cosine_similarity
 
 
 @dataclass
@@ -166,24 +166,12 @@ entities提取技术名词/项目名/工具名
             if not emb_new:
                 continue
             for _, emb_old in existing_embeddings:
-                sim = self._cosine_similarity(emb_new, emb_old)
+                sim = cosine_similarity(emb_new, emb_old)
                 if sim > 0.9:
                     mem["skip"] = True
                     break
 
         return memories
-
-    @staticmethod
-    def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        """计算余弦相似度"""
-        if not a or not b or len(a) != len(b):
-            return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(x * x for x in b))
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
 
     def _atomize(self, memory: dict) -> list[dict]:
         """判断记忆是否需要原子化拆分

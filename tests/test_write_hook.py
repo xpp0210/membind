@@ -41,10 +41,10 @@ def _clean_all_tables():
 def _insert_memory_with_embedding(content: str, embedding: list[float]) -> str:
     """直接插入一条带embedding的记忆（绕过_write，用于准备测试数据）"""
     import uuid
-    from datetime import datetime
+    from datetime import datetime, timezone
     memory_id = uuid.uuid4().hex[:16]
     tag_id = uuid.uuid4().hex[:16]
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:
         conn.execute(
@@ -99,11 +99,12 @@ async def test_write_high_similarity_detects_conflict():
     # 先插入一条记忆
     _insert_memory_with_embedding("Python是解释型编程语言", BASE_EMBEDDING)
 
-    # Mock embedder返回相似向量
+    # Mock memory_writer's embedder返回相似向量
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
     similar_emb = _make_similar_embedding(BASE_EMBEDDING, noise=0.001)
 
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=similar_emb):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=similar_emb):
         result = await _write("Python是一种解释型的编程语言")
 
     assert result["conflict_warnings"], "应该检测到冲突"
@@ -116,9 +117,10 @@ async def test_write_low_similarity_no_conflict():
     _insert_memory_with_embedding("完全不同的主题", BASE_EMBEDDING)
 
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
     diff_emb = _make_different_embedding()
 
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=diff_emb):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=diff_emb):
         result = await _write("一个全新的话题")
 
     assert result["conflict_warnings"] == []
@@ -130,9 +132,10 @@ async def test_conflict_warnings_has_id_and_similarity():
     existing_id = _insert_memory_with_embedding("测试内容ABC", BASE_EMBEDDING)
 
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
     similar_emb = _make_similar_embedding(BASE_EMBEDDING, noise=0.001)
 
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=similar_emb):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=similar_emb):
         result = await _write("测试内容ABC")
 
     warnings = result["conflict_warnings"]
@@ -148,8 +151,9 @@ async def test_conflict_warnings_has_id_and_similarity():
 async def test_write_no_embedding_no_crash():
     """5. 无embedding时写入不崩溃"""
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
 
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=None):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=None):
         result = await _write("没有embedding的记忆")
 
     assert "conflict_warnings" in result
@@ -161,21 +165,22 @@ async def test_write_no_embedding_no_crash():
 async def test_consecutive_writes_detect_conflicts():
     """6. 连续写入多条记忆都能正确检测"""
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
 
     # 第一条
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=BASE_EMBEDDING):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=BASE_EMBEDDING):
         r1 = await _write("第一条记忆")
     assert r1["conflict_warnings"] == []
 
     # 第二条（相似）→ 应该和第一条冲突
     similar_emb = _make_similar_embedding(BASE_EMBEDDING, noise=0.001)
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=similar_emb):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=similar_emb):
         r2 = await _write("和第一条很像的记忆")
     assert r2["conflict_warnings"], "第二条应该和第一条冲突"
 
     # 第三条（不同方向）→ 不冲突
     diff_emb = _make_different_embedding()
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=diff_emb):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=diff_emb):
         r3 = await _write("完全不同的第三条")
     assert r3["conflict_warnings"] == []
 
@@ -186,9 +191,10 @@ async def test_conflict_does_not_block_write():
     _insert_memory_with_embedding("原始记忆", BASE_EMBEDDING)
 
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
     similar_emb = _make_similar_embedding(BASE_EMBEDDING, noise=0.001)
 
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=similar_emb):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=similar_emb):
         result = await _write("与原始记忆冲突的内容")
 
     # 有冲突警告但记忆仍被创建
@@ -206,8 +212,9 @@ async def test_conflict_does_not_block_write():
 async def test_empty_database_write_no_conflict():
     """8. 空数据库写入无冲突"""
     from unittest.mock import patch, AsyncMock
+    from core.memory_writer import memory_writer
 
-    with patch("mcp_server.embedder.generate", new_callable=AsyncMock, return_value=BASE_EMBEDDING):
+    with patch.object(memory_writer.embedder, "generate", new_callable=AsyncMock, return_value=BASE_EMBEDDING):
         result = await _write("空数据库的第一条记忆")
 
     assert result["conflict_warnings"] == []

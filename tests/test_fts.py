@@ -38,7 +38,12 @@ def _insert_memory(conn, memory_id, content, scene=None, entities=None, is_delet
             "INSERT INTO context_tags (id, memory_id, scene, entities) VALUES (?, ?, ?, ?)",
             (f"tag-{memory_id}", memory_id, scene or "", json.dumps(entities or [])),
         )
-    # 手动同步到FTS（触发器在executescript中已创建）
+    # 手动同步到FTS（INSERT/UPDATE triggers已移除，memory_writer负责同步）
+    import json as _json
+    conn.execute(
+        "INSERT OR REPLACE INTO memories_fts (memory_id, content, scene, entities) VALUES (?, ?, ?, ?)",
+        (memory_id, content, scene or "", _json.dumps(entities or [])),
+    )
     conn.commit()
 
 
@@ -57,9 +62,9 @@ class TestFTSCreation:
             triggers = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='trigger'"
             ).fetchall()}
-            assert "memories_ai" in triggers
             assert "memories_ad" in triggers
-            assert "memories_au" in triggers
+            # memories_ai trigger removed: FTS sync now handled by memory_writer
+            assert "memories_ai" not in triggers
 
 
 class TestFTSSync:
@@ -68,7 +73,7 @@ class TestFTSSync:
     def test_insert_syncs_to_fts(self, fts_db):
         with get_connection(fts_db) as conn:
             _insert_memory(conn, "m1", "Python async programming guide", "coding", ["Python"])
-            # 触发器应已同步
+            # 手动同步应已写入FTS
             rows = conn.execute("SELECT * FROM memories_fts").fetchall()
             assert len(rows) >= 1
             assert rows[0][0] == "m1"  # memory_id
@@ -104,10 +109,7 @@ class TestFTSSync:
             _insert_memory(conn, "m1", "Python async programming", "coding", is_deleted=1)
             _insert_memory(conn, "m2", "Python data science", "coding")
 
-            # FTS触发器在UPDATE is_deleted时应删除FTS记录
-            # 但m1是直接以is_deleted=1插入的，触发器是AFTER INSERT
-            # 需要检查：触发器不检查is_deleted，所以FTS可能有数据
-            # 但JOIN时WHERE is_deleted=0会过滤
+            # m1以is_deleted=1插入，FTS有数据但JOIN时WHERE is_deleted=0会过滤
             rows = conn.execute("""
                 SELECT m.id FROM memories_fts fts
                 JOIN memories m ON m.id = fts.memory_id

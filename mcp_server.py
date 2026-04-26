@@ -26,8 +26,8 @@ from core.retriever import HybridRetriever, BindingScorer
 from core.conflict import conflict_detector
 from core.lifecycle import lifecycle_manager
 from core.cluster import cluster_manager
-from core.cluster import cluster_manager
 from core.merger import merger
+from core.memory_writer import memory_writer
 from services.binding_service import record_binding, update_feedback, get_stats
 
 # 初始化数据库
@@ -177,45 +177,19 @@ async def _write(content: str, scene: str | None = None, entities: list[str] | N
         hint["scene"] = scene
     if entities:
         hint["entities"] = entities
-    hint_context = hint if hint else None
 
-    tag = await tagger.tag(content, hint_context=hint_context)
-    embedding = await embedder.generate(content)
+    result = await memory_writer.write(
+        content=content,
+        hint_context=hint if hint else None,
+        conflict_mode="fast",
+    )
 
-    memory_id = uuid.uuid4().hex[:16]
-    tag_id = uuid.uuid4().hex[:16]
-    now = datetime.utcnow().isoformat()
-    entities_json = json.dumps(tag.entities, ensure_ascii=False)
-
-    with get_connection() as conn:
-        conn.execute(
-            """INSERT INTO memories (id, content, importance, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, '{}', ?, ?)""",
-            (memory_id, content, tag.importance, now, now),
-        )
-        conn.execute(
-            """INSERT INTO context_tags (id, memory_id, scene, task_type, entities, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (tag_id, memory_id, tag.scene, tag.task_type, entities_json, now),
-        )
-        if embedding and any(v != 0.0 for v in embedding):
-            vec_bytes = struct.pack(f"{len(embedding)}f", *embedding)
-            conn.execute("INSERT INTO memories_vec (id, embedding) VALUES (?, ?)", (memory_id, vec_bytes))
-        conn.commit()
-
-    # 自动冲突检测（Top-10向量比对，不调LLM）
-    conflict_warnings = []
-    if embedding and any(v != 0.0 for v in embedding):
-        conflict_result = await conflict_detector.detect_write_conflict_fast(content, embedding)
-        if conflict_result["has_conflict"]:
-            # 排除自身（刚插入的记忆）
-            conflict_warnings = [c for c in conflict_result["conflicts"] if c["id"] != memory_id]
-
-    # 知识簇分配（连接外，因为assign_cluster有自己的连接）
-    if embedding and any(v != 0.0 for v in embedding):
-        await cluster_manager.assign_cluster(memory_id, embedding)
-
-    return {"id": memory_id, "scene": tag.scene, "importance": tag.importance, "conflict_warnings": conflict_warnings}
+    return {
+        "id": result.memory_id,
+        "scene": result.scene,
+        "importance": result.importance,
+        "conflict_warnings": result.conflict_warnings,
+    }
 
 
 async def _recall(query: str, top_k: int = 5, scene: str | None = None) -> dict:
@@ -258,8 +232,8 @@ def _get(memory_id: str) -> dict:
         row = conn.execute(
             """SELECT m.content, m.importance, m.created_at, m.updated_at,
                       t.scene, t.task_type, t.entities,
-                      (SELECT COUNT(*) FROM binding_records br WHERE br.memory_id = m.id) as binding_count,
-                      (SELECT COUNT(*) FROM binding_records br WHERE br.memory_id = m.id AND br.feedback = 1) as hit_count
+                      (SELECT COUNT(*) FROM binding_history br WHERE br.memory_id = m.id) as binding_count,
+                      (SELECT COUNT(*) FROM binding_history br WHERE br.memory_id = m.id AND br.was_relevant = 1) as hit_count
                FROM memories m
                LEFT JOIN context_tags t ON t.memory_id = m.id
                WHERE m.id = ?""",

@@ -5,11 +5,11 @@ MemBind 知识簇管理器
 基于向量余弦相似度，无LLM调用开销。
 """
 
-import math
 import struct
 import uuid
 
 from db.connection import get_connection
+from core.utils import cosine_similarity, blob_to_floats
 
 
 class ClusterManager:
@@ -43,7 +43,7 @@ class ClusterManager:
                 cluster_id, centroid_blob, member_count = row
                 if not centroid_blob:
                     continue
-                sim = self._cosine_similarity_blob(centroid_blob, embedding)
+                sim = cosine_similarity(blob_to_floats(centroid_blob, len(centroid_blob) // 4), embedding)
                 if sim > best_sim:
                     best_sim = sim
                     best_cluster_id = cluster_id
@@ -160,7 +160,7 @@ class ClusterManager:
                 for j in range(i + 1, len(clusters)):
                     if clusters[j]["id"] in merged_ids:
                         continue
-                    sim = self._cosine_similarity_vec(clusters[i]["embedding"], clusters[j]["embedding"])
+                    sim = cosine_similarity(clusters[i]["embedding"], clusters[j]["embedding"])
                     if sim > threshold:
                         # 把j的成员归入i
                         target_id = clusters[i]["id"]
@@ -203,24 +203,6 @@ class ClusterManager:
                     for r in largest
                 ],
             }
-
-    def _cosine_similarity_blob(self, blob: bytes, vec_b: list[float]) -> float:
-        """BLOB向量与float列表的余弦相似度"""
-        dim = len(blob) // 4
-        vec_a = list(struct.unpack(f"{dim}f", blob))
-        return self._cosine_similarity_vec(vec_a, vec_b)
-
-    def _cosine_similarity_vec(self, vec_a: list[float], vec_b: list[float]) -> float:
-        """两个float列表的余弦相似度"""
-        dim = min(len(vec_a), len(vec_b))
-        if dim == 0:
-            return 0.0
-        dot = sum(vec_a[i] * vec_b[i] for i in range(dim))
-        norm_a = math.sqrt(sum(v * v for v in vec_a[:dim]))
-        norm_b = math.sqrt(sum(v * v for v in vec_b[:dim]))
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
 
     def _update_centroid(self, conn, cluster_id: str, new_embedding: list[float]) -> None:
         """增量更新簇中心（均值）"""

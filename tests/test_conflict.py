@@ -121,7 +121,16 @@ async def test_recall_conflict_warnings(client):
     ]
 
     await client.post("/api/v1/memory/write", json={"content": "test recall warning"})
-    with patch.object(conflict_detector, "detect_recall_conflicts", new_callable=AsyncMock, return_value=warnings):
+
+    # Mock retriever to return results so detect_recall_conflicts gets called
+    fake_recalled = [
+        {"id": "mem_a", "content": "MySQL", "score": 0.9, "tags": {}},
+        {"id": "mem_b", "content": "PostgreSQL", "score": 0.8, "tags": {}},
+    ]
+    with patch("api.recall.retriever.recall", new_callable=AsyncMock, return_value=fake_recalled), \
+         patch("api.recall.scorer.score", return_value={"binding_score": 0.5, "reason": "test"}), \
+         patch("api.recall.record_binding"), \
+         patch.object(conflict_detector, "detect_recall_conflicts", new_callable=AsyncMock, return_value=warnings):
         resp = await client.post("/api/v1/memory/recall", json={"query": "数据库"})
 
     assert resp.status_code == 200

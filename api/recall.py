@@ -4,7 +4,6 @@ MemBind 检索API
 POST /api/v1/memory/recall — 两阶段检索（recall → bind）
 """
 
-from typing import Optional
 from fastapi import APIRouter, Query, Request
 
 from core.retriever import HybridRetriever, BindingScorer
@@ -12,6 +11,7 @@ from core.conflict import conflict_detector
 from services.binding_service import record_binding
 from db.connection import get_connection
 from api.deps import get_namespace
+from models.memory import RecallRequest
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"])
 
@@ -19,26 +19,10 @@ retriever = HybridRetriever()
 scorer = BindingScorer()
 
 
-class RecallRequest:
-    """Recall请求（内联，避免额外模型文件）"""
-    def __init__(self, query: str, context: Optional[dict] = None,
-                 top_k: int = 5, recall_n: int = 20):
-        self.query = query
-        self.context = context
-        self.top_k = top_k
-        self.recall_n = recall_n
-
-
 @router.post("/recall")
-async def recall_memory(body: dict, request: Request):
+async def recall_memory(req: RecallRequest, request: Request):
     namespace = get_namespace(request)
-    """两阶段检索：向量召回top-20 → binding评分取top-k"""
-    req = RecallRequest(
-        query=body.get("query", ""),
-        context=body.get("context"),
-        top_k=body.get("top_k", 5),
-        recall_n=body.get("recall_n", 20),
-    )
+    """两阶段检索：向量召回top-20 → binding评分取top_k"""
 
     if not req.query:
         return {"error": "query is required", "results": []}

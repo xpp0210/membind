@@ -8,7 +8,7 @@ MemBind 记忆合并器
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import settings
 from db.connection import get_connection
@@ -45,7 +45,7 @@ class Merger:
 
         # 写入新记忆
         merged_id = uuid.uuid4().hex[:16]
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         with get_connection() as conn:
             # 简单查询获取scene和entities

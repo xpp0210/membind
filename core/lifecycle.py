@@ -13,7 +13,7 @@ from db.connection import get_connection
 class LifecycleManager:
     """记忆生命周期管理器"""
 
-    def decay_all(self, dry_run: bool = False) -> dict:
+    def decay_all(self, dry_run: bool = False, namespace: str = "default") -> dict:
         """对所有活跃记忆执行importance衰减。活跃度高的衰减慢。"""
         decay_amount = settings.IMPORTANCE_DECAY
         now = datetime.now(timezone.utc).isoformat()
@@ -22,7 +22,8 @@ class LifecycleManager:
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT id, importance, hit_count, binding_count
-                   FROM memories WHERE is_deleted = 0 AND importance > 0"""
+                   FROM memories WHERE is_deleted = 0 AND importance > 0 AND namespace = ?""",
+                (namespace,),
             ).fetchall()
 
             for row in rows:
@@ -53,7 +54,7 @@ class LifecycleManager:
             "details": affected,
         }
 
-    def cleanup(self, dry_run: bool = False) -> dict:
+    def cleanup(self, dry_run: bool = False, namespace: str = "default") -> dict:
         """清理importance低于阈值的记忆（软删除）"""
         threshold = settings.CLEANUP_THRESHOLD
         now = datetime.now(timezone.utc).isoformat()
@@ -62,8 +63,8 @@ class LifecycleManager:
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT id, content, importance, created_at
-                   FROM memories WHERE is_deleted = 0 AND importance < ?""",
-                (threshold,),
+                   FROM memories WHERE is_deleted = 0 AND importance < ? AND namespace = ?""",
+                (threshold, namespace),
             ).fetchall()
 
             for row in rows:
@@ -146,14 +147,15 @@ class LifecycleManager:
 
         return {"status": "ok", "id": memory_id, "action": "restored", "importance": 5.0}
 
-    def get_decay_candidates(self, limit: int = 20) -> list[dict]:
+    def get_decay_candidates(self, limit: int = 20, namespace: str = "default") -> list[dict]:
         """获取importance最低的记忆（即将被清理）"""
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT id, content, importance, hit_count, binding_count, updated_at
                    FROM memories WHERE is_deleted = 0
+                   AND namespace = ?
                    ORDER BY importance ASC LIMIT ?""",
-                (limit,),
+                (namespace, limit),
             ).fetchall()
 
             return [

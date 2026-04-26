@@ -8,7 +8,7 @@ POST /api/v1/conflicts/auto-resolve — LLM自动解决
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
@@ -23,9 +23,9 @@ router = APIRouter(prefix="/api/v1", tags=["conflict"])
 
 @router.get("/conflicts")
 async def list_conflicts(
+    request: Request,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    request: Request = None,
 ):
     """列出所有未解决的冲突"""
     namespace = get_namespace(request)
@@ -33,7 +33,8 @@ async def list_conflicts(
         total = conn.execute(
             "SELECT COUNT(*) FROM conflict_log cl "
             "JOIN memories m_a ON m_a.id = cl.memory_id_a "
-            "WHERE cl.resolution = 'pending' AND m_a.namespace = ?"
+            "WHERE cl.resolution = 'pending' AND m_a.namespace = ?",
+            (namespace,),
         ).fetchone()[0]
 
         rows = conn.execute(
@@ -94,7 +95,7 @@ async def resolve_conflict(body: dict):
             return {"error": "conflict not found or already resolved"}
 
         id_a, id_b = row[0], row[1]
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # 更新conflict_log
         conn.execute(
@@ -141,7 +142,7 @@ async def auto_resolve_conflicts():
             return {"status": "ok", "resolved": 0, "details": []}
 
         details = []
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         for row in rows:
             cid, id_a, id_b = row[0], row[1], row[2]
