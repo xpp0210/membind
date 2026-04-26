@@ -106,6 +106,16 @@ TOOL_SCHEMAS = {
             },
         },
     },
+    "memory_consolidate": {
+        "description": "记忆巩固：提升频繁被激活的记忆的巩固等级，降低其衰减速率",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string", "description": "命名空间，默认default"},
+            },
+        },
+    },
+
     "memory_conflict_check": {
         "description": "主动冲突检查，检测给定内容与已有记忆的冲突",
         "inputSchema": {
@@ -289,15 +299,21 @@ def handle_stats(_args: dict) -> dict:
 
 
 def handle_decay(args: dict) -> dict:
-    """批量衰减：先执行衰减，再清理低于阈值的"""
-    days = args.get("days", 30)
+    """批量衰减：Ebbinghaus指数衰减 + 清理低于阈值的"""
     namespace = args.get("namespace", "default")
     decay_result = lifecycle_manager.decay_all(namespace=namespace)
     cleanup_result = lifecycle_manager.cleanup(namespace=namespace)
     return {
+        "model": "ebbinghaus_v2",
         "decayed_count": decay_result["affected_count"],
         "cleaned_count": cleanup_result["cleaned_count"],
     }
+
+
+def handle_consolidate(args: dict) -> dict:
+    """记忆巩固：提升符合条件的记忆的巩固等级"""
+    namespace = args.get("namespace", "default")
+    return lifecycle_manager.consolidate(namespace=namespace)
 
 
 async def handle_conflict_check(args: dict) -> dict:
@@ -374,6 +390,7 @@ HANDLERS = {
     "memory_timeline": handle_timeline,
     "memory_stats": handle_stats,
     "memory_decay": handle_decay,
+    "memory_consolidate": handle_consolidate,
     "memory_conflict_check": handle_conflict_check,
     "memory_merge": handle_merge,
     "memory_export": handle_export,

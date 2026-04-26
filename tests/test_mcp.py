@@ -37,11 +37,11 @@ async def setup_db(tmp_path):
 @pytest.mark.asyncio
 async def test_list_tools():
     tools = await list_tools()
-    assert len(tools) == 11
+    assert len(tools) == 12
     names = {t.name for t in tools}
     expected = {"memory_write", "memory_recall", "memory_get", "memory_timeline", "memory_feedback",
                "memory_stats", "memory_decay", "memory_conflict_check", "memory_merge", "memory_export",
-               "memory_cluster_stats"}
+               "memory_cluster_stats", "memory_consolidate"}
     assert names == expected
 
 

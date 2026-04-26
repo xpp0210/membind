@@ -47,3 +47,23 @@ async def client(tmp_path):
     # 恢复
     settings.MEMBIND_DB_PATH = original_db
     settings.RATE_LIMIT_PER_MINUTE = original_rate
+
+
+@pytest.fixture
+def db_conn(tmp_path):
+    """创建直接的SQLite连接，使用与client相同的临时数据库路径"""
+    db_path = str(tmp_path / "test_membind.db")
+
+    original_db = settings.MEMBIND_DB_PATH
+    settings.MEMBIND_DB_PATH = db_path
+
+    import sqlite3
+    from db.connection import init_db
+    init_db(db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    yield conn
+    conn.close()
+
+    settings.MEMBIND_DB_PATH = original_db

@@ -36,7 +36,7 @@ async def setup_db(tmp_path):
 async def test_list_tools_has_10():
     """list_tools返回11个工具"""
     tools = await list_tools()
-    assert len(tools) == 11
+    assert len(tools) == 12
     names = {t.name for t in tools}
     assert "memory_stats" in names
     assert "memory_decay" in names

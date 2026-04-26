@@ -53,8 +53,10 @@ class Settings(BaseSettings):
     # ── 冲突检测 ──
     CONFLICT_THRESHOLD: float = 0.85    # 相似度超过此值视为冲突
 
-    # ── 生命周期 ──
-    IMPORTANCE_DECAY: float = 0.5       # 衰减步长
+    # ── 生命周期（V2：Ebbinghaus指数衰减）──
+    DECAY_STEP: float = 0.3             # 衰减基础步长（V2取代IMPORTANCE_DECAY）
+    DECAY_HALF_LIFE_HOURS: float = 72.0 # 衰减半衰期（小时），72h≈3天
+    IMPORTANCE_DECAY: float = 0.5       # [兼容] 旧版线性衰减步长，V2不再使用
     IMPORTANCE_BOOST: float = 1.0       # 强化步长
     DECAY_DAYS: int = 30               # 衰减阈值（天）
     DELETE_DAYS: int = 90              # 软删除阈值（天）
@@ -62,10 +64,20 @@ class Settings(BaseSettings):
     BOOST_RELEVANT_RATE: float = 0.8   # 强化所需相关率
     CLEANUP_THRESHOLD: float = 1.0      # importance低于此值标记删除
 
+    # ── 记忆巩固（V2-3）──
+    CONSOLIDATION_THRESHOLDS: str = "5,15,30"  # 巩固等级升级阈值（binding_count）
+    CONSOLIDATION_MIN_ACCURACY: float = 0.6    # 巩固所需最低binding准确率
+    CONSOLIDATION_MIN_HOURS: float = 24.0      # 两次巩固之间的最小间隔（小时）
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
     }
+
+    @property
+    def consolidation_thresholds_list(self) -> list[int]:
+        """解析巩固阈值为整数列表"""
+        return [int(x.strip()) for x in self.CONSOLIDATION_THRESHOLDS.split(",")]
 
 
 settings = Settings()

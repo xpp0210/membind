@@ -65,7 +65,7 @@ def init_db(db_path: str | None = None) -> None:
     with get_connection(db_path) as conn:
         conn.executescript(sql)
 
-        # 迁移：原子化相关字段
+        # 迁移：新增字段
         _migrate_columns(conn)
 
     print(f"[MemBind] 数据库初始化完成: {db_path or settings.MEMBIND_DB_PATH}")
@@ -85,6 +85,8 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         ("event_date", "TEXT"),
         # 多Agent命名空间隔离
         ("namespace", "TEXT DEFAULT 'default'"),
+        # V2-2/V2-3: 记忆巩固等级 0=未巩固, 1=短期巩固, 2=中期巩固, 3=长期巩固
+        ("consolidation_level", "INTEGER DEFAULT 0"),
     ]
 
     for col_name, col_type in migrations:
