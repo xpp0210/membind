@@ -38,6 +38,8 @@ server = Server("membind")
 
 # ── 工具 schema 定义 ──
 
+_namespace_prop = {"type": "string", "description": "命名空间，默认default"}
+
 TOOL_SCHEMAS = {
     "memory_write": {
         "description": "写入一条记忆到MemBind",
@@ -47,6 +49,7 @@ TOOL_SCHEMAS = {
                 "content": {"type": "string", "description": "记忆文本"},
                 "scene": {"type": "string", "description": "场景：coding/research/writing/ops/chat/learning/general"},
                 "entities": {"type": "array", "items": {"type": "string"}, "description": "实体列表"},
+                "namespace": _namespace_prop,
             },
             "required": ["content"],
         },
@@ -59,6 +62,7 @@ TOOL_SCHEMAS = {
                 "query": {"type": "string", "description": "查询文本"},
                 "top_k": {"type": "integer", "description": "返回数量，默认5"},
                 "scene": {"type": "string", "description": "场景过滤"},
+                "namespace": _namespace_prop,
             },
             "required": ["query"],
         },
@@ -69,6 +73,7 @@ TOOL_SCHEMAS = {
             "type": "object",
             "properties": {
                 "memory_id": {"type": "string", "description": "记忆ID"},
+                "namespace": _namespace_prop,
             },
             "required": ["memory_id"],
         },
@@ -97,6 +102,7 @@ TOOL_SCHEMAS = {
             "type": "object",
             "properties": {
                 "days": {"type": "integer", "description": "衰减天数阈值，默认30"},
+                "namespace": _namespace_prop,
             },
         },
     },
@@ -128,6 +134,7 @@ TOOL_SCHEMAS = {
             "properties": {
                 "scene": {"type": "string", "description": "按场景过滤"},
                 "limit": {"type": "integer", "description": "最大数量，默认100"},
+                "namespace": _namespace_prop,
             },
         },
     },
@@ -139,6 +146,7 @@ TOOL_SCHEMAS = {
                 "memory_id": {"type": "string", "description": "记忆ID"},
                 "query": {"type": "string", "description": "原始查询"},
                 "relevant": {"type": "boolean", "description": "是否相关"},
+                "namespace": _namespace_prop,
             },
             "required": ["memory_id", "query", "relevant"],
         },
@@ -160,6 +168,7 @@ async def handle_write(args: dict) -> dict:
     content = args["content"]
     scene = args.get("scene")
     entities = args.get("entities")
+    namespace = args.get("namespace", "default")
 
     hint = {}
     if scene:
@@ -169,6 +178,7 @@ async def handle_write(args: dict) -> dict:
 
     result = await memory_writer.write(
         content=content,
+        namespace=namespace,
         hint_context=hint if hint else None,
         conflict_mode="fast",
     )
@@ -186,10 +196,11 @@ async def handle_recall(args: dict) -> dict:
     query = args["query"]
     top_k = args.get("top_k", 5)
     scene = args.get("scene")
+    namespace = args.get("namespace", "default")
 
     context = {"scene": scene} if scene else None
     result = await recall_service.recall_and_bind(
-        query, context, top_k=top_k, check_conflicts=False,
+        query, context, top_k=top_k, check_conflicts=False, namespace=namespace,
     )
 
     return {
@@ -210,6 +221,7 @@ async def handle_recall(args: dict) -> dict:
 def handle_get(args: dict) -> dict:
     """查询单条记忆完整信息"""
     memory_id = args["memory_id"]
+    namespace = args.get("namespace", "default")
 
     with get_connection() as conn:
         row = conn.execute(
@@ -219,8 +231,8 @@ def handle_get(args: dict) -> dict:
                       (SELECT COUNT(*) FROM binding_history br WHERE br.memory_id = m.id AND br.was_relevant = 1) as hit_count
                FROM memories m
                LEFT JOIN context_tags t ON t.memory_id = m.id
-               WHERE m.id = ?""",
-            (memory_id,),
+               WHERE m.id = ? AND m.namespace = ?""",
+            (memory_id, namespace),
         ).fetchone()
         if not row:
             return {"error": "not found", "memory_id": memory_id}
@@ -279,8 +291,9 @@ def handle_stats(_args: dict) -> dict:
 def handle_decay(args: dict) -> dict:
     """批量衰减：先执行衰减，再清理低于阈值的"""
     days = args.get("days", 30)
-    decay_result = lifecycle_manager.decay_all()
-    cleanup_result = lifecycle_manager.cleanup()
+    namespace = args.get("namespace", "default")
+    decay_result = lifecycle_manager.decay_all(namespace=namespace)
+    cleanup_result = lifecycle_manager.cleanup(namespace=namespace)
     return {
         "decayed_count": decay_result["affected_count"],
         "cleaned_count": cleanup_result["cleaned_count"],
@@ -307,6 +320,7 @@ def handle_export(args: dict) -> dict:
     """导出记忆列表"""
     scene = args.get("scene")
     limit = args.get("limit", 100)
+    namespace = args.get("namespace", "default")
 
     with get_connection() as conn:
         if scene:
@@ -314,18 +328,18 @@ def handle_export(args: dict) -> dict:
                 """SELECT m.id, m.content, COALESCE(t.scene, 'general') as scene,
                           m.importance, m.created_at
                    FROM memories m LEFT JOIN context_tags t ON t.memory_id = m.id
-                   WHERE m.is_deleted = 0 AND t.scene = ?
+                   WHERE m.is_deleted = 0 AND t.scene = ? AND m.namespace = ?
                    ORDER BY m.created_at DESC LIMIT ?""",
-                (scene, limit),
+                (scene, namespace, limit),
             ).fetchall()
         else:
             rows = conn.execute(
                 """SELECT m.id, m.content, COALESCE(t.scene, 'general') as scene,
                           m.importance, m.created_at
                    FROM memories m LEFT JOIN context_tags t ON t.memory_id = m.id
-                   WHERE m.is_deleted = 0
+                   WHERE m.is_deleted = 0 AND m.namespace = ?
                    ORDER BY m.created_at DESC LIMIT ?""",
-                (limit,),
+                (namespace, limit),
             ).fetchall()
 
         memories = [
@@ -341,6 +355,7 @@ async def handle_feedback(args: dict) -> dict:
     memory_id = args["memory_id"]
     query = args["query"]
     relevant = args["relevant"]
+    namespace = args.get("namespace", "default")
     update_feedback(memory_id, query, relevant)
     return {"status": "ok", "memory_id": memory_id, "relevant": relevant}
 

@@ -8,3 +8,5 @@ httpx
 python-dotenv
 pytest
 pytest-asyncio
+prometheus-client>=0.20.0
+watchdog>=4.0.0

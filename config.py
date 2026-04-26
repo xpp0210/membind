@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # ── 速率限制 ──
     RATE_LIMIT_PER_MINUTE: int = 60  # 每分钟请求数，0=不限
 
+    # ── 配置热更新 ──
+    CONFIG_WATCH: bool = False  # 是否监听.env变更自动重载
+
     # ── 冲突检测 ──
     CONFLICT_THRESHOLD: float = 0.85    # 相似度超过此值视为冲突
 

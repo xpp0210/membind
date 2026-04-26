@@ -13,23 +13,11 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 from config import settings
+from core.http_client import get_client
 from db.connection import get_connection
 from core.utils import cosine_similarity, blob_to_floats
 
 logger = logging.getLogger(__name__)
-
-# ── 模块级 httpx 连接池（复用连接） ──
-_llm_client: httpx.AsyncClient | None = None
-
-
-async def _get_llm_client() -> httpx.AsyncClient:
-    global _llm_client
-    if _llm_client is None or _llm_client.is_closed:
-        _llm_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(10.0, connect=5.0),
-            limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
-        )
-    return _llm_client
 
 
 @dataclass
@@ -252,7 +240,7 @@ class ConflictDetector:
                 f"resolution可选: keep_both, keep_new, keep_old"
             )
 
-            client = await _get_llm_client()
+            client = get_client(timeout=30.0)
             resp = await client.post(
                 f"{settings.LLM_API_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},

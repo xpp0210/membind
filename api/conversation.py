@@ -4,8 +4,12 @@ MemBind 对话记忆提取API
 POST /api/v1/memory/conversation
 """
 
+import logging
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from core.conversation import ConversationParser
 from core.memory_writer import memory_writer
@@ -64,7 +68,7 @@ async def conversation_parse(req: ConversationRequest, request: Request):
                     })
                     stored_count += 1
             except Exception as e:
-                print(f"[MemBind] 存储对话记忆失败: {e}")
+                logger.error("存储对话记忆失败: %s", e)
 
     return {
         "filtered_count": len(messages) - len(result.skipped),

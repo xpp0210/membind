@@ -13,6 +13,7 @@ import httpx
 from datetime import datetime
 
 from config import settings
+from core.http_client import get_client
 from models.context_tag import ContextTag
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class ContextTagger:
     """上下文标签提取器"""
 
     def __init__(self):
-        self._llm_client: httpx.AsyncClient | None = None
+        pass
 
     async def tag(self, content: str, hint_context: dict | None = None) -> ContextTag:
         """提取上下文标签（规则优先 + LLM兜底）"""
@@ -129,7 +130,7 @@ entities提取技术名词/项目名/工具名
                 "temperature": 0.1,
                 "max_tokens": 200,
             }
-            client = self._get_llm_client()
+            client = get_client(timeout=30.0)
             resp = await client.post(
                 f"{settings.LLM_API_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -188,21 +189,6 @@ entities提取技术名词/项目名/工具名
             score += 1.5
         return max(0.0, min(10.0, score))
 
-    def _get_llm_client(self) -> httpx.AsyncClient:
-        """获取或创建可复用的LLM HTTP客户端（连接池复用）"""
-        if self._llm_client is None or self._llm_client.is_closed:
-            self._llm_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(30.0, connect=10.0),
-                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            )
-        return self._llm_client
-
-    async def close(self):
-        """关闭底层HTTP客户端"""
-        if self._llm_client is not None and not self._llm_client.is_closed:
-            await self._llm_client.aclose()
-            self._llm_client = None
-
 
 class EmbeddingGenerator:
     """调用智谱embedding-3外部API生成向量"""
@@ -211,7 +197,6 @@ class EmbeddingGenerator:
         self._api_url = settings.EMBEDDING_API_URL
         self._api_key = settings.EMBEDDING_API_KEY
         self._model = settings.EMBEDDING_API_MODEL
-        self._client: httpx.AsyncClient | None = None
 
     async def generate(self, text: str) -> list[float]:
         """生成embedding向量"""
@@ -219,7 +204,7 @@ class EmbeddingGenerator:
             # 无key时返回零向量（开发/测试模式）
             return [0.0] * settings.EMBEDDING_DIM
 
-        client = self._get_client()
+        client = get_client(timeout=60.0)
         try:
             resp = await client.post(
                 self._api_url,
@@ -242,7 +227,7 @@ class EmbeddingGenerator:
         if not self._api_key:
             return [[0.0] * settings.EMBEDDING_DIM for _ in texts]
 
-        client = self._get_client()
+        client = get_client(timeout=60.0)
         resp = await client.post(
             self._api_url,
             headers={"Authorization": f"Bearer {self._api_key}"},
@@ -254,18 +239,3 @@ class EmbeddingGenerator:
         # 按index排序确保顺序一致
         items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in items]
-
-    def _get_client(self) -> httpx.AsyncClient:
-        """获取或创建可复用的HTTP客户端（连接池复用）"""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(60.0, connect=10.0),
-                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            )
-        return self._client
-
-    async def close(self):
-        """关闭底层HTTP客户端"""
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
