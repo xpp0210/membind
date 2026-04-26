@@ -10,7 +10,10 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+import httpx
+
 from config import settings
+from core.http_client import get_client
 from db.connection import get_connection
 
 logger = logging.getLogger(__name__)
@@ -103,8 +106,6 @@ class Merger:
             return f"{content_a}\n---\n{content_b}"
 
         try:
-            import httpx
-
             prompt = (
                 f"合并以下两条记忆，保留所有关键信息，去除重复内容，输出合并后的纯文本：\n"
                 f"记忆A: {content_a}\n"
@@ -112,18 +113,18 @@ class Merger:
                 f"合并结果："
             )
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(
-                    f"{settings.LLM_API_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},
-                    json={
-                        "model": settings.LLM_MODEL,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.1,
-                    },
-                )
-                if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"].strip()
+            client = get_client(timeout=15.0)
+            resp = await client.post(
+                f"{settings.LLM_API_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},
+                json={
+                    "model": settings.LLM_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                },
+            )
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
             logger.warning(f"LLM merge failed, falling back to concat: {e}")
 

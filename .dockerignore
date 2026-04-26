@@ -1,7 +1,12 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
-data/
 .env
+data/
 .git/
 tests/
+docs/
+*.md
+deploy/
+.pytest_cache/

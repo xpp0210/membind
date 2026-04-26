@@ -1,16 +1,16 @@
 """
 MemBind MCP Server（stdio模式）
 
-通过MCP协议暴露5个工具：memory_write / memory_recall / memory_get / memory_timeline / memory_feedback
+通过MCP协议暴露11个工具：
+  memory_write / memory_recall / memory_get / memory_timeline / memory_stats /
+  memory_decay / memory_conflict_check / memory_merge / memory_export /
+  memory_feedback / memory_cluster_stats
 直接调用core和db模块，不走HTTP API。
 """
 
 import os
 import sys
 import json
-import uuid
-import struct
-from datetime import datetime
 
 # 确保项目根目录在path中
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,159 +19,148 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-from config import settings
 from db.connection import init_db, get_connection
-from core.writer import ContextTagger, EmbeddingGenerator
-from core.retriever import HybridRetriever, BindingScorer
 from core.conflict import conflict_detector
 from core.lifecycle import lifecycle_manager
 from core.cluster import cluster_manager
 from core.merger import merger
 from core.memory_writer import memory_writer
-from services.binding_service import record_binding, update_feedback, get_stats
+from core.recall_service import recall_service
+from services.binding_service import update_feedback, get_stats
 
 # 初始化数据库
 init_db()
 
 # 模块级实例
-tagger = ContextTagger()
-embedder = EmbeddingGenerator()
-retriever = HybridRetriever()
-scorer = BindingScorer()
 
 server = Server("membind")
 
 
-@server.list_tools()
-async def list_tools():
-    return [
-        types.Tool(
-            name="memory_write",
-            description="写入一条记忆到MemBind",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string", "description": "记忆文本"},
-                    "scene": {"type": "string", "description": "场景：coding/research/writing/ops/chat/learning/general"},
-                    "entities": {"type": "array", "items": {"type": "string"}, "description": "实体列表"},
-                },
-                "required": ["content"],
+# ── 工具 schema 定义 ──
+
+TOOL_SCHEMAS = {
+    "memory_write": {
+        "description": "写入一条记忆到MemBind",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "记忆文本"},
+                "scene": {"type": "string", "description": "场景：coding/research/writing/ops/chat/learning/general"},
+                "entities": {"type": "array", "items": {"type": "string"}, "description": "实体列表"},
             },
-        ),
-        types.Tool(
-            name="memory_recall",
-            description="从MemBind检索记忆",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "查询文本"},
-                    "top_k": {"type": "integer", "description": "返回数量，默认5"},
-                    "scene": {"type": "string", "description": "场景过滤"},
-                },
-                "required": ["query"],
+            "required": ["content"],
+        },
+    },
+    "memory_recall": {
+        "description": "从MemBind检索记忆",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "查询文本"},
+                "top_k": {"type": "integer", "description": "返回数量，默认5"},
+                "scene": {"type": "string", "description": "场景过滤"},
             },
-        ),
-        types.Tool(
-            name="memory_get",
-            description="查询单条记忆完整信息（content + tags + stats）",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "memory_id": {"type": "string", "description": "记忆ID"},
-                },
-                "required": ["memory_id"],
+            "required": ["query"],
+        },
+    },
+    "memory_get": {
+        "description": "查询单条记忆完整信息（content + tags + stats）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "记忆ID"},
             },
-        ),
-        types.Tool(
-            name="memory_timeline",
-            description="返回该记忆前后的相关记忆（按created_at排序）",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "memory_id": {"type": "string", "description": "记忆ID"},
-                    "window": {"type": "integer", "description": "前后各取多少条，默认2"},
-                },
-                "required": ["memory_id"],
+            "required": ["memory_id"],
+        },
+    },
+    "memory_timeline": {
+        "description": "返回该记忆前后的相关记忆（按created_at排序）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "记忆ID"},
+                "window": {"type": "integer", "description": "前后各取多少条，默认2"},
             },
-        ),
-        types.Tool(
-            name="memory_stats",
-            description="记忆库概览统计",
-            inputSchema={
-                "type": "object",
-                "properties": {},
+            "required": ["memory_id"],
+        },
+    },
+    "memory_stats": {
+        "description": "记忆库概览统计",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    "memory_decay": {
+        "description": "批量衰减N天未命中的记忆（默认30天）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "衰减天数阈值，默认30"},
             },
-        ),
-        types.Tool(
-            name="memory_decay",
-            description="批量衰减N天未命中的记忆（默认30天）",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "days": {"type": "integer", "description": "衰减天数阈值，默认30"},
-                },
+        },
+    },
+    "memory_conflict_check": {
+        "description": "主动冲突检查，检测给定内容与已有记忆的冲突",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "待检查的内容"},
             },
-        ),
-        types.Tool(
-            name="memory_conflict_check",
-            description="主动冲突检查，检测给定内容与已有记忆的冲突",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string", "description": "待检查的内容"},
-                },
-                "required": ["content"],
+            "required": ["content"],
+        },
+    },
+    "memory_merge": {
+        "description": "合并两条记忆为一条，原记忆软删除",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id_a": {"type": "string", "description": "记忆A的ID"},
+                "id_b": {"type": "string", "description": "记忆B的ID"},
             },
-        ),
-        types.Tool(
-            name="memory_merge",
-            description="合并两条记忆为一条，原记忆软删除",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "id_a": {"type": "string", "description": "记忆A的ID"},
-                    "id_b": {"type": "string", "description": "记忆B的ID"},
-                },
-                "required": ["id_a", "id_b"],
+            "required": ["id_a", "id_b"],
+        },
+    },
+    "memory_export": {
+        "description": "导出记忆列表",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "scene": {"type": "string", "description": "按场景过滤"},
+                "limit": {"type": "integer", "description": "最大数量，默认100"},
             },
-        ),
-        types.Tool(
-            name="memory_export",
-            description="导出记忆列表",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "scene": {"type": "string", "description": "按场景过滤"},
-                    "limit": {"type": "integer", "description": "最大数量，默认100"},
-                },
+        },
+    },
+    "memory_feedback": {
+        "description": "反馈记忆相关性",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "记忆ID"},
+                "query": {"type": "string", "description": "原始查询"},
+                "relevant": {"type": "boolean", "description": "是否相关"},
             },
-        ),
-        types.Tool(
-            name="memory_feedback",
-            description="反馈记忆相关性",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "memory_id": {"type": "string", "description": "记忆ID"},
-                    "query": {"type": "string", "description": "原始查询"},
-                    "relevant": {"type": "boolean", "description": "是否相关"},
-                },
-                "required": ["memory_id", "query", "relevant"],
-            },
-        ),
-        types.Tool(
-            name="memory_cluster_stats",
-            description="知识簇统计信息",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
-        ),
-    ]
+            "required": ["memory_id", "query", "relevant"],
+        },
+    },
+    "memory_cluster_stats": {
+        "description": "知识簇统计信息",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
 
 
-async def _write(content: str, scene: str | None = None, entities: list[str] | None = None) -> dict:
-    """写入记忆（核心逻辑）"""
+# ── Handler 实现 ──
+
+async def handle_write(args: dict) -> dict:
+    """写入记忆"""
+    content = args["content"]
+    scene = args.get("scene")
+    entities = args.get("entities")
+
     hint = {}
     if scene:
         hint["scene"] = scene
@@ -192,24 +181,16 @@ async def _write(content: str, scene: str | None = None, entities: list[str] | N
     }
 
 
-async def _recall(query: str, top_k: int = 5, scene: str | None = None) -> dict:
-    """检索记忆（核心逻辑）"""
+async def handle_recall(args: dict) -> dict:
+    """检索记忆（使用 recall_service）"""
+    query = args["query"]
+    top_k = args.get("top_k", 5)
+    scene = args.get("scene")
+
     context = {"scene": scene} if scene else None
-    recalled = await retriever.recall(query, context, top_k * 4)
-
-    if not recalled:
-        return {"results": [], "total": 0}
-
-    scored = []
-    for mem in recalled:
-        binding = scorer.score(query, mem, context)
-        scored.append({**mem, "binding": binding})
-
-    scored.sort(key=lambda x: x["binding"]["binding_score"], reverse=True)
-    top_results = scored[:top_k]
-
-    for r in top_results:
-        record_binding(r["id"], query, r["binding"]["binding_score"], context)
+    result = await recall_service.recall_and_bind(
+        query, context, top_k=top_k, check_conflicts=False,
+    )
 
     return {
         "results": [
@@ -220,14 +201,16 @@ async def _recall(query: str, top_k: int = 5, scene: str | None = None) -> dict:
                 "binding_score": r["binding"]["binding_score"],
                 "tags": r.get("tags", {}),
             }
-            for r in top_results
+            for r in result["results"]
         ],
-        "total": len(top_results),
+        "total": result["top_k"],
     }
 
 
-def _get(memory_id: str) -> dict:
+def handle_get(args: dict) -> dict:
     """查询单条记忆完整信息"""
+    memory_id = args["memory_id"]
+
     with get_connection() as conn:
         row = conn.execute(
             """SELECT m.content, m.importance, m.created_at, m.updated_at,
@@ -255,8 +238,11 @@ def _get(memory_id: str) -> dict:
         }
 
 
-def _timeline(memory_id: str, window: int = 2) -> dict:
+def handle_timeline(args: dict) -> dict:
     """返回该记忆前后的相关记忆"""
+    memory_id = args["memory_id"]
+    window = args.get("window", 2)
+
     with get_connection() as conn:
         row = conn.execute("SELECT created_at FROM memories WHERE id = ?", (memory_id,)).fetchone()
         if not row:
@@ -279,7 +265,7 @@ def _timeline(memory_id: str, window: int = 2) -> dict:
     return {"results": results, "total": len(results)}
 
 
-def _stats() -> dict:
+def handle_stats(_args: dict) -> dict:
     """记忆库概览统计"""
     stats = get_stats()
     with get_connection() as conn:
@@ -290,8 +276,9 @@ def _stats() -> dict:
     return stats
 
 
-def _decay(days: int = 30) -> dict:
+def handle_decay(args: dict) -> dict:
     """批量衰减：先执行衰减，再清理低于阈值的"""
+    days = args.get("days", 30)
     decay_result = lifecycle_manager.decay_all()
     cleanup_result = lifecycle_manager.cleanup()
     return {
@@ -300,47 +287,27 @@ def _decay(days: int = 30) -> dict:
     }
 
 
-async def _conflict_check(content: str) -> dict:
-    """主动冲突检查：用向量相似度快速比对Top-10"""
+async def handle_conflict_check(args: dict) -> dict:
+    """主动冲突检查：用 conflict_detector.detect_write_conflict_fast()"""
+    content = args["content"]
     from core.writer import EmbeddingGenerator
-
     gen = EmbeddingGenerator()
     embedding = await gen.generate(content)
     if not embedding or all(v == 0.0 for v in embedding):
         return {"has_conflict": False, "message": "embedding生成失败"}
-
-    with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT m.id, m.content, v.embedding
-               FROM memories m JOIN memories_vec v ON v.id = m.id
-               WHERE m.is_deleted = 0"""
-        ).fetchall()
-
-    if not rows:
-        return {"has_conflict": False}
-
-    scored = []
-    for row in rows:
-        mem_id, mem_content, emb_bytes = row[0], row[1], row[2]
-        if not emb_bytes:
-            continue
-        import struct
-        existing_emb = list(struct.unpack(f"{len(embedding)}f", emb_bytes[: len(embedding) * 4]))
-        sim = conflict_detector._cosine_similarity(embedding, existing_emb)
-        scored.append({"id": mem_id, "content": mem_content, "similarity": round(sim, 4)})
-
-    scored.sort(key=lambda x: x["similarity"], reverse=True)
-    top = scored[:10]
-    conflicting = [m for m in top if m["similarity"] > 0.85]
-
-    return {
-        "has_conflict": len(conflicting) > 0,
-        "conflicting": conflicting if conflicting else None,
-    }
+    return await conflict_detector.detect_write_conflict_fast(content, embedding)
 
 
-def _export(scene: str | None = None, limit: int = 100) -> dict:
+async def handle_merge(args: dict) -> dict:
+    """合并两条记忆"""
+    return await merger.merge(id_a=args["id_a"], id_b=args["id_b"])
+
+
+def handle_export(args: dict) -> dict:
     """导出记忆列表"""
+    scene = args.get("scene")
+    limit = args.get("limit", 100)
+
     with get_connection() as conn:
         if scene:
             rows = conn.execute(
@@ -369,52 +336,60 @@ def _export(scene: str | None = None, limit: int = 100) -> dict:
     return {"total": len(memories), "memories": memories}
 
 
-async def _feedback(memory_id: str, query: str, relevant: bool) -> dict:
+async def handle_feedback(args: dict) -> dict:
     """反馈记忆相关性"""
+    memory_id = args["memory_id"]
+    query = args["query"]
+    relevant = args["relevant"]
     update_feedback(memory_id, query, relevant)
     return {"status": "ok", "memory_id": memory_id, "relevant": relevant}
 
 
+def handle_cluster_stats(_args: dict) -> dict:
+    """知识簇统计"""
+    return cluster_manager.get_stats()
+
+
+# ── Handler 注册表 ──
+
+HANDLERS = {
+    "memory_write": handle_write,
+    "memory_recall": handle_recall,
+    "memory_get": handle_get,
+    "memory_timeline": handle_timeline,
+    "memory_stats": handle_stats,
+    "memory_decay": handle_decay,
+    "memory_conflict_check": handle_conflict_check,
+    "memory_merge": handle_merge,
+    "memory_export": handle_export,
+    "memory_feedback": handle_feedback,
+    "memory_cluster_stats": handle_cluster_stats,
+}
+
+
+# ── MCP Server 生命周期 ──
+
+@server.list_tools()
+async def list_tools():
+    return [
+        types.Tool(name=name, **schema)
+        for name, schema in TOOL_SCHEMAS.items()
+    ]
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
-    if name == "memory_write":
-        result = await _write(
-            content=arguments["content"],
-            scene=arguments.get("scene"),
-            entities=arguments.get("entities"),
-        )
-    elif name == "memory_recall":
-        result = await _recall(
-            query=arguments["query"],
-            top_k=arguments.get("top_k", 5),
-            scene=arguments.get("scene"),
-        )
-    elif name == "memory_get":
-        result = _get(memory_id=arguments["memory_id"])
-    elif name == "memory_timeline":
-        result = _timeline(memory_id=arguments["memory_id"], window=arguments.get("window", 2))
-    elif name == "memory_feedback":
-        result = await _feedback(
-            memory_id=arguments["memory_id"],
-            query=arguments["query"],
-            relevant=arguments["relevant"],
-        )
-    elif name == "memory_stats":
-        result = _stats()
-    elif name == "memory_decay":
-        result = _decay(days=arguments.get("days", 30))
-    elif name == "memory_conflict_check":
-        result = await _conflict_check(content=arguments["content"])
-    elif name == "memory_merge":
-        result = await merger.merge(id_a=arguments["id_a"], id_b=arguments["id_b"])
-    elif name == "memory_export":
-        result = _export(scene=arguments.get("scene"), limit=arguments.get("limit", 100))
-    elif name == "memory_cluster_stats":
-        result = cluster_manager.get_stats()
-    else:
+    handler = HANDLERS.get(name)
+    if handler is None:
         raise ValueError(f"Unknown tool: {name}")
 
+    result = await handler(arguments) if _is_coroutine(handler) else handler(arguments)
     return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+def _is_coroutine(func) -> bool:
+    import asyncio
+    return asyncio.iscoroutinefunction(func)
 
 
 async def main():

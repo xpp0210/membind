@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
 from db.connection import init_db, get_connection
-from mcp_server import _write, _recall, _stats, _decay, _conflict_check, _export, list_tools
+from mcp_server import handle_write, handle_recall, handle_stats, handle_decay, handle_conflict_check, handle_export, list_tools
 from core.merger import merger
 
 
@@ -48,10 +48,10 @@ async def test_list_tools_has_10():
 @pytest.mark.asyncio
 async def test_memory_stats():
     """memory_stats返回正确统计"""
-    await _write("测试记忆1", scene="coding")
-    await _write("测试记忆2", scene="general")
+    await handle_write({"content": "测试记忆1", "scene": "coding"})
+    await handle_write({"content": "测试记忆2", "scene": "general"})
 
-    result = _stats()
+    result = handle_stats({})
     assert result["total_memories"] >= 2
     assert "scene_distribution" in result
     assert "total_bindings" in result
@@ -61,9 +61,9 @@ async def test_memory_stats():
 @pytest.mark.asyncio
 async def test_memory_decay():
     """memory_decay衰减记忆"""
-    await _write("衰减测试记忆")
+    await handle_write({"content": "衰减测试记忆"})
 
-    result = _decay(days=30)
+    result = handle_decay({"days": 30})
     assert "decayed_count" in result
     assert result["decayed_count"] >= 1
 
@@ -71,9 +71,9 @@ async def test_memory_decay():
 @pytest.mark.asyncio
 async def test_conflict_check_no_conflict():
     """memory_conflict_check无冲突返回false"""
-    await _write("Python列表推导式用法")
+    await handle_write({"content": "Python列表推导式用法"})
 
-    result = await _conflict_check("Java Stream API处理集合")
+    result = await handle_conflict_check({"content": "Java Stream API处理集合"})
     # 无embedding（API key为空）时返回has_conflict=False
     assert result["has_conflict"] is False
 
@@ -81,10 +81,10 @@ async def test_conflict_check_no_conflict():
 @pytest.mark.asyncio
 async def test_conflict_check_with_conflict():
     """memory_conflict_check有相似内容返回true+详情"""
-    await _write("Redis缓存策略：LRU淘汰算法配置")
+    await handle_write({"content": "Redis缓存策略：LRU淘汰算法配置"})
 
     # 完全相同内容应触发（但由于无embedding，此测试验证fallback行为）
-    result = await _conflict_check("Redis缓存策略：LRU淘汰算法配置")
+    result = await handle_conflict_check({"content": "Redis缓存策略：LRU淘汰算法配置"})
     # 无embedding时embedding生成失败，返回false
     assert "has_conflict" in result
 
@@ -92,8 +92,8 @@ async def test_conflict_check_with_conflict():
 @pytest.mark.asyncio
 async def test_memory_merge():
     """memory_merge合并两条记忆"""
-    a = await _write("Redis用于缓存热点数据")
-    b = await _write("Redis常用于缓存热数据减少数据库压力")
+    a = await handle_write({"content": "Redis用于缓存热点数据"})
+    b = await handle_write({"content": "Redis常用于缓存热数据减少数据库压力"})
 
     result = await merger.merge(a["id"], b["id"])
     assert result["status"] == "ok"
@@ -105,8 +105,8 @@ async def test_memory_merge():
 @pytest.mark.asyncio
 async def test_memory_merge_soft_delete():
     """memory_merge后原记忆软删除"""
-    a = await _write("原始记忆A")
-    b = await _write("原始记忆B")
+    a = await handle_write({"content": "原始记忆A"})
+    b = await handle_write({"content": "原始记忆B"})
 
     await merger.merge(a["id"], b["id"])
 
@@ -124,8 +124,8 @@ async def test_memory_merge_soft_delete():
 @pytest.mark.asyncio
 async def test_memory_merge_no_llm_concat():
     """memory_merge无LLM key时简单拼接"""
-    a = await _write("内容A部分")
-    b = await _write("内容B部分")
+    a = await handle_write({"content": "内容A部分"})
+    b = await handle_write({"content": "内容B部分"})
 
     result = await merger.merge(a["id"], b["id"])
     assert "---" in result["merged_content"]
@@ -136,10 +136,10 @@ async def test_memory_merge_no_llm_concat():
 @pytest.mark.asyncio
 async def test_memory_export_all():
     """memory_export导出全部"""
-    await _write("导出测试1", scene="coding")
-    await _write("导出测试2", scene="research")
+    await handle_write({"content": "导出测试1", "scene": "coding"})
+    await handle_write({"content": "导出测试2", "scene": "research"})
 
-    result = _export()
+    result = handle_export({})
     assert result["total"] >= 2
     assert len(result["memories"]) >= 2
     # 验证字段
@@ -154,10 +154,10 @@ async def test_memory_export_all():
 @pytest.mark.asyncio
 async def test_memory_export_filter_by_scene():
     """memory_export按scene过滤"""
-    await _write("编码场景记忆", scene="coding")
-    await _write("学习场景记忆", scene="learning")
+    await handle_write({"content": "编码场景记忆", "scene": "coding"})
+    await handle_write({"content": "学习场景记忆", "scene": "learning"})
 
-    result = _export(scene="coding")
+    result = handle_export({"scene": "coding"})
     assert result["total"] >= 1
     assert all(m["scene"] == "coding" for m in result["memories"])
 
@@ -166,7 +166,7 @@ async def test_memory_export_filter_by_scene():
 async def test_memory_export_limit():
     """memory_export限制数量"""
     for i in range(5):
-        await _write(f"限制测试记忆{i}", scene="general")
+        await handle_write({"content": f"限制测试记忆{i}", "scene": "general"})
 
-    result = _export(limit=2)
+    result = handle_export({"limit": 2})
     assert result["total"] == 2

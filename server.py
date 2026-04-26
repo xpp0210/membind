@@ -4,6 +4,9 @@ MemBind 服务入口
 FastAPI应用实例 + CORS + API Key认证 + 健康检查 + 启动初始化
 """
 
+import time
+from collections import defaultdict
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
@@ -11,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from db.connection import init_db
 from api.deps import verify_api_key
+from config import settings
 
 
 @asynccontextmanager
@@ -28,13 +32,44 @@ app = FastAPI(
 )
 
 # ── CORS中间件 ──
+_allowed_origins = settings.CORS_ALLOWED_ORIGINS
+if _allowed_origins:
+    _origins = [o.strip() for o in _allowed_origins.split(",") if o.strip()]
+else:
+    _origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── 速率限制中间件 ──
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """简单内存速率限制（每分钟N次）"""
+    if settings.RATE_LIMIT_PER_MINUTE <= 0:
+        return await call_next(request)
+    
+    client_key = request.client.host if request.client else "unknown"
+    now = time.time()
+    minute_ago = now - 60
+    
+    # 清理过期记录
+    _rate_limit_store[client_key] = [
+        t for t in _rate_limit_store[client_key] if t > minute_ago
+    ]
+    
+    if len(_rate_limit_store[client_key]) >= settings.RATE_LIMIT_PER_MINUTE:
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+    
+    _rate_limit_store[client_key].append(now)
+    return await call_next(request)
 
 
 # ── API Key认证中间件 ──

@@ -31,6 +31,10 @@ async def client(tmp_path):
     settings.EMBEDDING_API_KEY = ""
     settings.LLM_API_KEY = ""
 
+    # 禁用速率限制（测试环境）
+    original_rate = settings.RATE_LIMIT_PER_MINUTE
+    settings.RATE_LIMIT_PER_MINUTE = 0
+
     # 延迟导入server（确保settings已更新）
     from db.connection import init_db
     init_db(db_path)
@@ -42,3 +46,4 @@ async def client(tmp_path):
 
     # 恢复
     settings.MEMBIND_DB_PATH = original_db
+    settings.RATE_LIMIT_PER_MINUTE = original_rate

@@ -5,7 +5,7 @@ MemBind 记忆数据模型
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -48,3 +48,8 @@ class RecallRequest(BaseModel):
     context: dict | None = None
     top_k: int = Field(5, ge=1, le=50)
     recall_n: int = Field(20, ge=1, le=100)
+
+
+class ConflictResolveRequest(BaseModel):
+    conflict_id: str
+    resolution: Literal["keep_both", "keep_new", "keep_old", "merge"]

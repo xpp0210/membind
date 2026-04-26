@@ -15,6 +15,7 @@ from fastapi import APIRouter, Query, Request
 from core.conflict import conflict_detector
 from db.connection import get_connection
 from api.deps import get_namespace
+from models.memory import ConflictResolveRequest
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +74,10 @@ async def list_conflicts(
 
 
 @router.post("/conflicts/resolve")
-async def resolve_conflict(body: dict):
+async def resolve_conflict(req: ConflictResolveRequest):
     """手动解决冲突"""
-    conflict_id = body.get("conflict_id", "")
-    resolution = body.get("resolution", "")
+    conflict_id = req.conflict_id
+    resolution = req.resolution
 
     if not conflict_id or not resolution:
         return {"error": "conflict_id and resolution are required"}

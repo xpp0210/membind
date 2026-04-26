@@ -70,35 +70,46 @@ def get_neighbors(session_key: str, turn_id: str, seq: int,
                   window: int = 2) -> list[dict]:
     """获取上下文chunk（timeline用），返回前后window个chunk + 当前chunk"""
     with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT * FROM chunks
-               WHERE session_key = ? AND is_deleted = 0
-               ORDER BY created_at, seq""",
-            (session_key,)
-        ).fetchall()
+        # 获取当前 chunk 的 created_at 作为锚点
+        anchor = conn.execute(
+            "SELECT created_at, seq FROM chunks WHERE session_key = ? AND turn_id = ? AND seq = ? AND is_deleted = 0",
+            (session_key, turn_id, seq)
+        ).fetchone()
+        if not anchor:
+            return []
 
-    anchor_idx = None
-    for i, row in enumerate(rows):
-        r = dict(row)
-        if r["turn_id"] == turn_id and r["seq"] == seq:
-            anchor_idx = i
-            break
+        anchor_time, anchor_seq = anchor[0], anchor[1]
 
-    if anchor_idx is None:
-        return []
+        # 前 window 条（按时间倒序取再反转）
+        before = conn.execute("""
+            SELECT * FROM chunks
+            WHERE session_key = ? AND is_deleted = 0
+              AND (created_at, seq) < (?, ?)
+            ORDER BY created_at DESC, seq DESC
+            LIMIT ?
+        """, (session_key, anchor_time, anchor_seq, window)).fetchall()
 
-    start = max(0, anchor_idx - window)
-    end = min(len(rows), anchor_idx + window + 1)
+        # 当前
+        current = conn.execute("""
+            SELECT * FROM chunks WHERE session_key = ? AND turn_id = ? AND seq = ? AND is_deleted = 0
+        """, (session_key, turn_id, seq)).fetchone()
+
+        # 后 window 条
+        after = conn.execute("""
+            SELECT * FROM chunks
+            WHERE session_key = ? AND is_deleted = 0
+              AND (created_at, seq) > (?, ?)
+            ORDER BY created_at ASC, seq ASC
+            LIMIT ?
+        """, (session_key, anchor_time, anchor_seq, window)).fetchall()
+
     result = []
-    for i in range(start, end):
-        chunk = dict(rows[i])
-        if i < anchor_idx:
-            chunk["relation"] = "before"
-        elif i == anchor_idx:
-            chunk["relation"] = "current"
-        else:
-            chunk["relation"] = "after"
-        result.append(chunk)
+    for row in reversed(before):
+        result.append({**dict(row), "relation": "before"})
+    if current:
+        result.append({**dict(current), "relation": "current"})
+    for row in after:
+        result.append({**dict(row), "relation": "after"})
     return result
 
 

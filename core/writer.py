@@ -5,6 +5,7 @@ ContextTagger: 规则引擎提取上下文标签
 EmbeddingGenerator: 调用智谱embedding-3外部API
 """
 
+import logging
 import json
 import re
 import hashlib
@@ -13,6 +14,8 @@ from datetime import datetime
 
 from config import settings
 from models.context_tag import ContextTag
+
+logger = logging.getLogger(__name__)
 
 
 # ── 场景关键词表 ──
@@ -142,7 +145,7 @@ entities提取技术名词/项目名/工具名
                 if result.get("scene") in valid_scenes:
                     return result
         except Exception as e:
-            print(f"[MemBind] LLM标签提取失败: {e}")
+            logger.warning(f"LLM标签提取失败: {e}")
         return None
 
     def _extract_entities(self, content: str) -> list[str]:
@@ -228,10 +231,10 @@ class EmbeddingGenerator:
             data = resp.json()
             return data["data"][0]["embedding"]
         except httpx.HTTPStatusError as e:
-            print(f"[MemBind] embedding API错误: {e.response.status_code}, 降级为零向量")
+            logger.warning(f"embedding API错误: {e.response.status_code}, 降级为零向量")
             return [0.0] * settings.EMBEDDING_DIM
         except Exception as e:
-            print(f"[MemBind] embedding生成失败: {e}, 降级为零向量")
+            logger.warning(f"embedding生成失败: {e}, 降级为零向量")
             return [0.0] * settings.EMBEDDING_DIM
 
     async def generate_batch(self, texts: list[str]) -> list[list[float]]:

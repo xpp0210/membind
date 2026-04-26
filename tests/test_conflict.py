@@ -127,10 +127,11 @@ async def test_recall_conflict_warnings(client):
         {"id": "mem_a", "content": "MySQL", "score": 0.9, "tags": {}},
         {"id": "mem_b", "content": "PostgreSQL", "score": 0.8, "tags": {}},
     ]
-    with patch("api.recall.retriever.recall", new_callable=AsyncMock, return_value=fake_recalled), \
-         patch("api.recall.scorer.score", return_value={"binding_score": 0.5, "reason": "test"}), \
-         patch("api.recall.record_binding"), \
-         patch.object(conflict_detector, "detect_recall_conflicts", new_callable=AsyncMock, return_value=warnings):
+    with patch("api.recall.recall_service.recall_and_bind", new_callable=AsyncMock,
+               return_value={"query": "数据库", "results": [
+                   {**m, "binding": {"binding_score": 0.5, "reason": "test"}}
+                   for m in fake_recalled
+               ], "total_recalled": 2, "top_k": 2, "conflict_warnings": warnings}):
         resp = await client.post("/api/v1/memory/recall", json={"query": "数据库"})
 
     assert resp.status_code == 200

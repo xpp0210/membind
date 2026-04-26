@@ -6,13 +6,17 @@ ConversationParser: 对话信息过滤器、压缩器和提取器
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 
 import httpx
 
 from config import settings
+from core.http_client import get_client
 from core.utils import cosine_similarity
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -103,45 +107,45 @@ entities提取技术名词/项目名/工具名
 {conversation_text[:3000]}"""
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"{self._llm_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self._llm_key}"},
-                    json={
-                        "model": self._llm_model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.1,
-                        "max_tokens": 1000,
-                    },
-                )
-                resp.raise_for_status()
-                text = resp.json()["choices"][0]["message"]["content"].strip()
+            client = get_client(timeout=30.0)
+            resp = await client.post(
+                f"{self._llm_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self._llm_key}"},
+                json={
+                    "model": self._llm_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                },
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"].strip()
 
-                # 提取JSON数组
-                json_match = re.search(r'\[.*\]', text, re.DOTALL)
-                if not json_match:
-                    return []
-                result = json.loads(json_match.group())
+            # 提取JSON数组
+            json_match = re.search(r'\[.*\]', text, re.DOTALL)
+            if not json_match:
+                return []
+            result = json.loads(json_match.group())
 
-                # 校验格式
-                valid = []
-                for item in result:
-                    if isinstance(item, dict) and "content" in item:
-                        valid.append({
-                            "content": item["content"],
-                            "importance": float(item.get("importance", 5.0)),
-                            "scene": item.get("scene", "general"),
-                            "entities": item.get("entities", []),
-                        })
+            # 校验格式
+            valid = []
+            for item in result:
+                if isinstance(item, dict) and "content" in item:
+                    valid.append({
+                        "content": item["content"],
+                        "importance": float(item.get("importance", 5.0)),
+                        "scene": item.get("scene", "general"),
+                        "entities": item.get("entities", []),
+                    })
 
-                # 原子化拆分
-                atomized = []
-                for mem in valid:
-                    atomized.extend(self._atomize(mem))
-                return atomized
+            # 原子化拆分
+            atomized = []
+            for mem in valid:
+                atomized.extend(self._atomize(mem))
+            return atomized
 
         except Exception as e:
-            print(f"[MemBind] 对话记忆提取失败: {e}")
+            logger.warning(f"对话记忆提取失败: {e}")
             return []
 
     async def deduplicate(
